@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Barcode — Explained for a Security Analyst</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #1A1F2B; font-size: 10.6pt; line-height: 1.5; margin: 0;
+  }
+  code, .mono { font-family: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+  h1, h2, h3 { color: #0E1422; line-height: 1.2; }
+  h2 {
+    font-size: 15pt; margin: 26px 0 8px;
+    padding-bottom: 5px; border-bottom: 2px solid #E3E7F0;
+  }
+  h2 .num {
+    display: inline-block; min-width: 26px; color: #2563EB; font-weight: 800;
+  }
+  h3 { font-size: 11.6pt; margin: 16px 0 4px; color: #16306B; }
+  p { margin: 6px 0; }
+  a { color: #2563EB; text-decoration: none; }
+  .lead { font-size: 11pt; color: #3A4252; }
+
+  /* Cover */
+  .cover { padding: 40px 0 8px; border-bottom: 3px solid #2563EB; margin-bottom: 6px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .bar {
+    width: 10px; height: 40px; border-radius: 3px;
+    background: linear-gradient(180deg, #2DD4FF, #8B5CF6);
+  }
+  .brand h1 { font-size: 30pt; margin: 0; letter-spacing: 1px; }
+  .subtitle { margin-top: 10px; font-size: 12pt; color: #3A4252; }
+  .meta { margin-top: 14px; font-size: 9.5pt; color: #6B7280; }
+
+  .callout {
+    background: #F4F7FF; border-left: 4px solid #2563EB;
+    padding: 9px 13px; border-radius: 6px; margin: 9px 0;
+  }
+  .callout.sec { background: #FFF6F1; border-left-color: #F97316; }
+  .callout .tag {
+    font-size: 8pt; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.06em; color: #2563EB;
+  }
+  .callout.sec .tag { color: #C2410C; }
+
+  /* Glossary term */
+  .term { margin: 11px 0; padding-left: 12px; border-left: 2px solid #E3E7F0; }
+  .term .name { font-weight: 700; color: #0E1422; }
+  .term .name .mono { background: #EEF2FB; padding: 1px 5px; border-radius: 4px; font-size: 9.6pt; }
+  .term .analogy { color: #B45309; font-size: 9.8pt; }
+  .term .analogy b { color: #92400E; }
+
+  table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 9.6pt; }
+  th, td { text-align: left; padding: 6px 9px; border-bottom: 1px solid #E5E9F2; vertical-align: top; }
+  th { background: #F1F4FB; color: #16306B; font-size: 8.6pt; text-transform: uppercase; letter-spacing: 0.04em; }
+  tr:nth-child(even) td { background: #FAFBFE; }
+
+  .pipe {
+    font-family: "SF Mono", Menlo, monospace; font-size: 9pt; line-height: 1.45;
+    background: #0E1422; color: #C9D4E5; padding: 12px 14px; border-radius: 8px;
+    white-space: pre; overflow-x: auto;
+  }
+  .pipe .hl { color: #2DD4FF; }
+  .pipe .hl2 { color: #C4A6FF; }
+
+  .pagebreak { page-break-before: always; }
+  ul { margin: 6px 0 6px 0; padding-left: 20px; }
+  li { margin: 3px 0; }
+  .tiny { font-size: 8.6pt; color: #6B7280; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="brand"><span class="bar"></span><h1>BARCODE</h1></div>
+  <div class="subtitle">Catching network attacks by the <i>shape</i> of the traffic.</div>
+  <div class="subtitle" style="font-size:10.5pt;color:#6B7280;">A plain-language guide to every term in the project — written for a security analyst, no advanced math required.</div>
+  <div class="meta">Topological anomaly detection &middot; CICIDS2017 &middot; Read time ≈ 45–60 min</div>
+</div>
+
+<h2><span class="num">0</span> The one-paragraph version</h2>
+<p class="lead">
+Most intrusion detection looks at <b>one connection at a time</b>. Barcode does something different: it takes a
+<b>group</b> of network flows, treats them as a cloud of dots in space, and measures the <b>shape</b> of that cloud.
+Normal traffic has a characteristic shape. An attack bends it — a port scan pokes holes in it, a DDoS crushes it into
+a blob. Barcode learns the shape of normal traffic once, then raises an alert whenever a new batch of traffic is
+"shaped wrong." It backs this up with classic models and a graph neural network, and compares all of them honestly.
+</p>
+
+<div class="callout sec">
+  <span class="tag">Why a security analyst should care</span><br>
+  Signature and per-flow models miss attacks that only look abnormal <i>in aggregate</i> (slow scans, distributed
+  floods, beaconing). Barcode is an <b>unsupervised, behavior-based</b> layer: it doesn't need a signature for the
+  attack, only a sense of what "normal shaped" traffic looks like. That makes it useful against novel/zero-day patterns.
+</div>
+
+<h2><span class="num">1</span> The pipeline, end to end</h2>
+<p>Here is the whole system on one page. Everything after this is just explaining each box.</p>
+<div class="pipe">CICIDS2017 flow records (CSV)
+        │
+   clean &amp; scale features         <span class="hl">→ put every feature on the same footing</span>
+        │
+   <span class="hl">sliding windows</span> (50 flows, step 25)   <span class="hl">→ look at groups, not single flows</span>
+        │
+        ├───────────────────────────────┐
+   <span class="hl2">Vietoris–Rips persistence</span>        <span class="hl2">per-window flow graph</span>
+   (the "shape" → H0, H1)          (flows become edges)
+        │                               │
+   <span class="hl2">Wasserstein</span> distance vs           <span class="hl2">GraphSAGE</span> neural net
+   a BENIGN reference shape         → attack probability
+        │                               │
+        └─────────── late fusion ───────┘
+                     │
+              anomaly score → ALERT if above threshold</div>
+
+<div class="callout">
+  <span class="tag">Reading guide</span><br>
+  Section 2 explains the math words (point cloud, homology, Wasserstein…). Section 3 explains the four detectors.
+  Section 4 walks through each attack type and <i>how</i> it deforms the shape. Section 5 is the scoreboard vocabulary.
+  You can read them in any order — each term is self-contained.
+</div>
+
+<h2 class="pagebreak"><span class="num">2</span> The math vocabulary (in plain English)</h2>
+<p>This is a branch of math called <b>Topology</b> — the study of shape and connectivity, the part that doesn't change
+when you stretch or bend something. The specific toolkit is <b>Topological Data Analysis (TDA)</b>, and its workhorse is
+<b>persistent homology</b>. Don't worry about the names; here's what each one actually means.</p>
+
+<div class="term">
+  <span class="name">Point cloud</span><br>
+  Take one window of traffic. Each flow has ~22 numbers (duration, packet counts, byte rates…). Treat those 22 numbers
+  as coordinates, so each flow becomes a single <b>dot</b> in a 22-dimensional space. A window of 50 flows is a cloud of 50 dots.
+  <div class="analogy"><b>Security analogy:</b> like plotting every connection as a star; an attack changes the constellation, not just one star.</div>
+</div>
+
+<div class="term">
+  <span class="name">Sliding window</span><br>
+  Instead of scoring one flow, Barcode scores a <span class="mono">window</span> of 50 consecutive flows, then slides forward
+  by 25 and scores the next overlapping batch. This is what lets it see <i>aggregate</i> behavior over time.
+  <div class="analogy"><b>Security analogy:</b> a rolling 50-event view on a SIEM, not a single log line.</div>
+</div>
+
+<div class="term">
+  <span class="name">Topology / "the shape"</span><br>
+  The properties of the cloud that survive stretching: how many separate <b>clumps</b> it has, and how many <b>loops</b>
+  (rings / holes) it has. Two clouds can have very different exact coordinates but the same topology.
+  <div class="analogy"><b>Security analogy:</b> like fingerprinting <i>structure</i>, robust to small jitter in the raw numbers.</div>
+</div>
+
+<div class="term">
+  <span class="name">Simplicial complex &amp; <span class="mono">simplex</span></span><br>
+  To measure shape, you connect nearby dots. A <b>simplex</b> is just the building block: a point (0), a line between two
+  points (1), a filled triangle between three (2), and so on. Gluing many simplices together gives a
+  <b>simplicial complex</b> — a connect-the-dots skeleton of the cloud.
+  <div class="analogy"><b>Security analogy:</b> a graph where you draw an edge between two flows that are "similar enough."</div>
+</div>
+
+<div class="term">
+  <span class="name"><span class="mono">Vietoris–Rips</span> filtration</span><br>
+  The key trick. Start with a distance threshold <span class="mono">ε = 0</span> (no dots connected). Slowly grow
+  <span class="mono">ε</span>. Any two dots closer than <span class="mono">ε</span> get linked. As <span class="mono">ε</span>
+  grows, clumps merge and loops form and then fill in. A <b>filtration</b> is this whole growing movie of the shape, from
+  fine detail to one big blob. "Vietoris–Rips" is just the rule for <i>when</i> to connect dots (by distance).
+  <div class="analogy"><b>Security analogy:</b> like tuning a similarity threshold from strict to loose and watching how the connection graph forms.</div>
+</div>
+
+<div class="term">
+  <span class="name">Homology dimensions: <span class="mono">H0</span> and <span class="mono">H1</span></span><br>
+  Homology is the bookkeeping of shape. <b>H0 = connected components</b> (how many separate clumps). <b>H1 = loops</b>
+  (how many 1-dimensional holes / rings). Barcode tracks both. Higher dimensions (H2 = voids) exist but aren't used here.
+  <div class="analogy"><b>Security analogy:</b> H0 ≈ "how many distinct behavior clusters"; H1 ≈ "are there cyclic/repeating interaction patterns."</div>
+</div>
+
+<div class="term">
+  <span class="name">Birth, death &amp; persistence</span><br>
+  As <span class="mono">ε</span> grows, a loop might appear ("born") at one threshold and disappear ("die") at a larger one.
+  <b>Persistence = death − birth</b>: how long the feature survives. Long-lived features are real structure; short-lived
+  ones are noise.
+  <div class="analogy"><b>Security analogy:</b> persistence is your signal-to-noise filter — keep the structure that survives, ignore the flicker.</div>
+</div>
+
+<div class="term">
+  <span class="name">Persistence diagram</span><br>
+  The final summary: a scatter plot where each dot is one feature, plotted as <b>(birth, death)</b>. Dots far from the
+  diagonal = strong, long-lived structure. This single picture <i>is</i> the topological signature of a traffic window.
+  (In the code, each diagram row is <span class="mono">(birth, death, dimension)</span>.)
+  <div class="analogy"><b>Security analogy:</b> the "shape fingerprint" of a 50-flow window. Compare two windows by comparing their diagrams.</div>
+</div>
+
+<div class="term">
+  <span class="name">Vectorizing a diagram: <span class="mono">persistence image</span>, <span class="mono">Betti curve</span>, <span class="mono">landscape</span></span><br>
+  A diagram is a set of dots, which is awkward for standard ML. These three methods turn it into a fixed list of numbers:
+  a <b>persistence image</b> (blur the dots into a heatmap), a <b>Betti curve</b> (count features vs. threshold), or a
+  <b>persistence landscape</b> (stack the features into a profile). All three say the same thing in a model-friendly format.
+  <div class="analogy"><b>Security analogy:</b> turning a rich structural fingerprint into a feature vector your existing tooling can ingest.</div>
+</div>
+
+<div class="term">
+  <span class="name">Wasserstein distance (optimal transport)</span><br>
+  How Barcode measures "how different are two shapes." Imagine each diagram as piles of sand; the Wasserstein distance is
+  the <b>minimum work to reshape one pile into the other</b> (that's "optimal transport"). The <b>order</b> (here 2) just
+  sets how heavily big moves are penalized. Crucially it is <b>stable</b>: a small change in traffic = a small change in
+  distance, so it doesn't overreact to noise.
+  <div class="analogy"><b>Security analogy:</b> a principled "distance from normal." Bigger distance = more anomalous window = higher alert score.</div>
+</div>
+
+<div class="term">
+  <span class="name">Reference diagram</span><br>
+  Barcode averages the diagrams of many <b>BENIGN</b> windows into one "what normal looks like" template. Every new window
+  is scored by its Wasserstein distance (on H1 loops) to this reference.
+  <div class="analogy"><b>Security analogy:</b> your behavioral <i>baseline</i>. Everything is judged as deviation from it.</div>
+</div>
+
+<div class="term">
+  <span class="name">Threshold (95th percentile)</span><br>
+  How far is "too far"? Barcode measures the distances of a held-out set of <i>known-benign</i> windows and takes the
+  <b>95th percentile</b> as the alarm line. Anything above it is flagged. By construction, that's about a 5% false-alarm
+  rate on clean traffic — a knob you can tune.
+  <div class="analogy"><b>Security analogy:</b> exactly like setting a detection threshold to hit an acceptable false-positive budget.</div>
+</div>
+
+<div class="term">
+  <span class="name">Stability / robustness to noise</span><br>
+  A formal property of persistent homology: small perturbations to the input move the diagram only a little. This is the
+  mathematical reason the method tolerates the natural jitter in real traffic.
+  <div class="analogy"><b>Security analogy:</b> fewer false positives from benign variability; the detector reacts to <i>structure</i>, not jitter.</div>
+</div>
+
+<h2 class="pagebreak"><span class="num">3</span> The four detectors</h2>
+<p>Barcode doesn't bet on one model. It runs several and compares them — and fuses the two most complementary ones.</p>
+
+<h3>3.1 TopoDetector (the star of the show)</h3>
+<p>The topology pipeline from Section 2, packaged as a detector: build the window's persistence diagram, measure its
+Wasserstein distance to the BENIGN reference, alert if above threshold. Fully <b>unsupervised</b> — it never sees attack
+labels during fitting, only normal traffic.</p>
+
+<h3>3.2 Isolation Forest (classic baseline)</h3>
+<div class="term" style="border:none;padding:0;margin:4px 0;">
+  An ensemble of 200 random trees that isolate points by random splits. Anomalies get isolated in <b>few</b> splits because
+  they sit in sparse regions. <span class="mono">contamination=0.05</span> tells it to expect ~5% outliers. It's a strong,
+  fast, per-window baseline that ignores topology entirely — included to prove the topological method earns its keep.
+</div>
+
+<h3>3.3 Autoencoder (classic baseline)</h3>
+<div class="term" style="border:none;padding:0;margin:4px 0;">
+  A small neural network (<span class="mono">64→32→16</span> then back out) trained <b>only on benign traffic</b> to
+  compress and reconstruct it. Benign input reconstructs well (low error); anomalous input reconstructs badly (high error),
+  and that <b>reconstruction error</b> is the anomaly score. Trained with MSE loss via Adam for 50 epochs.
+  <div class="analogy" style="margin-top:3px;"><b>Security analogy:</b> "it learned normal so well that anything it can't redraw is suspicious."</div>
+</div>
+
+<h3>3.4 GNN — GraphSAGE (the smart helper)</h3>
+<p>Some attacks barely change the topology but live in the <b>relationships</b> between flows. So Barcode also builds a
+<b>graph</b> from each window and uses a graph neural network.</p>
+<ul>
+  <li><b>Graph / node / edge:</b> features are quantized into pseudo-endpoints (<b>nodes</b>); each flow becomes an
+      <b>edge</b> connecting two endpoints. The window becomes a small network-of-flows.</li>
+  <li><b>GraphSAGE:</b> a GNN that learns by <b>message passing</b> — each node updates itself by aggregating ("sampling and
+      aggregating") information from its neighbors. Architecture: <span class="mono">SAGEConv 64→32</span> + a small
+      classifier head, trained as a <b>supervised</b> attack/benign classifier (BCE loss, 20 epochs).</li>
+</ul>
+<div class="callout sec">
+  <span class="tag">Why two methods?</span><br>
+  TDA is unsupervised and great at <b>structural</b> attacks; the GNN is supervised and great at <b>relational/edge-level</b>
+  attacks (the quiet ones). They cover each other's blind spots.
+</div>
+
+<h3>3.5 Late fusion (combining the scores)</h3>
+<div class="term" style="border:none;padding:0;margin:4px 0;">
+  The Fused detector takes the topo score and the GNN score, puts both on a 0–1 scale (<b>min-max normalization</b>), and
+  blends them with a weighted average (<b>convex combination</b>, weight <span class="mono">α = 0.5</span> = equal trust).
+  "Late" fusion = combine the two <i>final scores</i> rather than merging the models internally.
+  <div class="analogy" style="margin-top:3px;"><b>Security analogy:</b> two analysts vote; you average their confidence into one alert score.</div>
+</div>
+
+<h2 class="pagebreak"><span class="num">4</span> The anomalies: each attack and how it bends the shape</h2>
+<p>This is the part where the math pays off. Barcode is tested on BENIGN traffic plus these attack families from
+CICIDS2017. For each, here is the behavior <i>and</i> what it does to the topological shape.</p>
+
+<table>
+  <tr><th>Attack</th><th>What it does on the wire</th><th>How it perturbs the shape</th></tr>
+  <tr>
+    <td><b>BENIGN</b><br><span class="tiny">the baseline</span></td>
+    <td>Normal mix of sessions: varied durations, balanced forward/backward packets, moderate rates.</td>
+    <td>A broad, structured cloud with characteristic clumps (H0) and some loops (H1). This is the reference everything is compared to.</td>
+  </tr>
+  <tr>
+    <td><b>DDoS</b></td>
+    <td>Floods: very high packet rate, tiny packets, extremely one-sided (many forward, almost no backward), tight timing.</td>
+    <td><b>Collapses connected components.</b> Thousands of near-identical flows pile onto the same spot — the cloud crushes into one dense blob, so H0 drops sharply. Big Wasserstein jump.</td>
+  </tr>
+  <tr>
+    <td><b>PortScan</b></td>
+    <td>Probing many ports: ultra-short flows, tiny SYN-like packets, very few packets each.</td>
+    <td><b>Breaks the loop structure.</b> Normal request/response sessions form cyclic patterns (H1 loops); scans are one-shot, so those loops vanish and the cloud becomes spiky/scattered.</td>
+  </tr>
+  <tr>
+    <td><b>FTP-Patator</b><br><b>SSH-Patator</b><br><span class="tiny">brute force</span></td>
+    <td>Automated login guessing: many near-identical attempts with very regular, periodic inter-arrival times and consistent packet sizes.</td>
+    <td><b>Over-regular, repetitive structure.</b> The cloud becomes unnaturally tight and periodic compared to the natural spread of human sessions — a distinct, low-variance signature.</td>
+  </tr>
+  <tr>
+    <td><b>Web Attack —<br>Brute Force</b></td>
+    <td>Repeated credential attempts over HTTP: longer flows, larger packets than benign web traffic.</td>
+    <td>Shifts the cloud toward longer-duration, larger-packet regions and tightens it — a detectable drift plus reduced spread.</td>
+  </tr>
+  <tr>
+    <td><b>Infiltration</b><br><span class="tiny">the hard case</span></td>
+    <td>Stealthy, low-volume intrusion engineered to look almost exactly like normal traffic, flow by flow.</td>
+    <td><b>Barely moves the shape.</b> This is where pure topology struggles — the diagram is close to benign. The <b>GNN</b> rescues it using edge-level relationships the shape can't see. The whole reason fusion exists.</td>
+  </tr>
+  <tr>
+    <td><b>Bot</b></td>
+    <td>Command-and-control beaconing: long-lived connections that "phone home" on a very regular schedule (highly periodic timing).</td>
+    <td><b>Tight periodic clusters.</b> The metronome-like timing produces a small, dense, repeating structure unlike the irregular spread of benign sessions.</td>
+  </tr>
+</table>
+
+<div class="callout">
+  <span class="tag">The one mental model to keep</span><br>
+  <b>"Perturbation"</b> here just means: the attack <i>pushes the cloud away from its normal shape</i>. Floods crush it
+  (fewer components), scans de-loop it (fewer rings), brute-force/bots over-regularize it (too tight/periodic). Barcode
+  scores exactly that push with the Wasserstein distance — and for the pushes too subtle to see, the GNN listens to the
+  relationships instead.
+</div>
+
+<h2><span class="num">5</span> The scoreboard: how "good" is measured</h2>
+<p>Every detector is graded on the test split, overall and per attack type. These are standard detection metrics — likely
+familiar, included for completeness.</p>
+<table>
+  <tr><th>Metric</th><th>Plain meaning</th></tr>
+  <tr><td><b>ROC-AUC</b></td><td>Across all thresholds, the chance the detector ranks a real attack above a benign window. 1.0 = perfect, 0.5 = coin flip.</td></tr>
+  <tr><td><b>Precision</b></td><td>Of everything it flagged, what fraction were truly attacks. High precision = few false alarms.</td></tr>
+  <tr><td><b>Recall</b></td><td>Of all real attacks, what fraction it caught. High recall = few misses.</td></tr>
+  <tr><td><b>F1</b></td><td>The balance (harmonic mean) of precision and recall in one number.</td></tr>
+  <tr><td><b>Average Precision</b></td><td>Precision–recall summarized across thresholds; especially honest when attacks are rare (imbalanced data).</td></tr>
+</table>
+
+<h2><span class="num">6</span> The dataset &amp; the stack</h2>
+<div class="grid2">
+  <div>
+    <h3>CICIDS2017</h3>
+    <p>A widely used intrusion-detection benchmark from the Canadian Institute for Cybersecurity: realistic labeled network
+    flows, BENIGN plus 9 attack categories. Barcode trains its baseline on 70% of benign flows, calibrates the threshold on
+    10%, and tests on the remaining 20% benign + all attacks. If the CSVs aren't present, the dashboard generates realistic
+    synthetic traffic so it's always demoable.</p>
+  </div>
+  <div>
+    <h3>Tools used</h3>
+    <ul>
+      <li><b>Python 3.11</b> — the language.</li>
+      <li><b>giotto-tda</b> — persistent homology, diagram vectorization, Wasserstein.</li>
+      <li><b>PyTorch + PyTorch Geometric</b> — the GraphSAGE GNN.</li>
+      <li><b>scikit-learn</b> — Isolation Forest + metrics.</li>
+      <li><b>Streamlit + Plotly</b> — the interactive dashboard.</li>
+    </ul>
+  </div>
+</div>
+
+<div class="callout sec">
+  <span class="tag">TL;DR for your toolkit</span><br>
+  Barcode is a behavior-based, mostly-unsupervised aggregate-traffic detector. Its novelty is <b>scoring the geometric
+  shape of traffic windows</b> with persistent homology and an optimal-transport distance, backed by a graph neural network
+  for the stealthy cases, and benchmarked honestly against classic anomaly detectors. Think of it as a complementary
+  detection layer that triggers on <i>structural</i> anomalies signatures and per-flow models can miss.
+</div>
+
+<p class="tiny" style="margin-top:18px;">Barcode — topological anomaly detection for network traffic. This guide covers every term used in the project. Pair it with the dashboard screenshots for the visuals behind each concept.</p>
+
+</body>
+</html>
